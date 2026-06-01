@@ -194,6 +194,19 @@ Für konsistentes SQLite vorher Container stoppen oder mit `sqlite3 .backup` arb
 | `mykeyvault.lan` löst nicht auf | LAN-DNS / Router prüfen, ggf. `/etc/hosts`-Eintrag |
 | Bitwarden-Client „Login attempt failed" | Server-URL exakt `https://mykeyvault.lan` (kein Trailing-Slash, kein `/api`) |
 
+## Lizenz & Upstream
+
+Der **eigene Code** dieses Repos (`vault-api`, `mcp`, `setup.sh`, Compose) steht unter der **MIT-Lizenz** (siehe [`LICENSE`](LICENSE)).
+
+mykeyvault **orchestriert** zwei separate Upstream-Komponenten, ohne deren Quellcode zu verändern, einzubinden oder mitzuliefern — sie werden zur Laufzeit/Build-Zeit vom Nutzer selbst bezogen:
+
+| Komponente | Rolle | Lizenz | Einbindung |
+|---|---|---|---|
+| [Vaultwarden](https://github.com/dani-garcia/vaultwarden) | Vault-Server | AGPL-3.0 | unverändertes Docker-Image (`vaultwarden/server:latest`), eigener Container, Kommunikation über HTTP |
+| [Bitwarden CLI](https://github.com/bitwarden/clients) (`@bitwarden/cli`) | Vault-Client | GPL-3.0 | per `npm install` ins vault-api-Image, Aufruf als Subprozess (`bw …`) |
+
+Da beide als **eigenständige Programme** (eigener Prozess/Container, Aufruf über Netzwerk bzw. fork/exec) genutzt und nicht modifiziert oder als Quellcode weiterverteilt werden, propagiert deren Copyleft (AGPL/GPL) nicht auf den MIT-lizenzierten Code dieses Repos. Wer ein **kombiniertes** Image baut und weiterverteilt, übernimmt für die enthaltenen AGPL/GPL-Komponenten die jeweiligen Pflichten (Quelltext-Angebot; AGPL §13 für *modifizierte* Vaultwarden-Instanzen).
+
 ## Referenzen
 
 - Vaultwarden Wiki: https://github.com/dani-garcia/vaultwarden/wiki
