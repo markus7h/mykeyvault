@@ -1,0 +1,50 @@
+services:
+  mykeyvault:
+    image: vaultwarden/server:latest
+    container_name: mykeyvault
+    restart: unless-stopped
+    ports:
+      - "8222:80"
+    volumes:
+      - /var/local/mydocker/mykeyvault/data:/data
+    environment:
+      - SIGNUPS_ALLOWED=false
+      - DOMAIN=https://mykeyvault.lan
+      - LOG_LEVEL=warn
+      - ADMIN_TOKEN=${VAULTWARDEN_ADMIN_TOKEN:-}
+    networks:
+      - mykeyvault-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/alive"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  vault-api:
+    build:
+      context: ./vault-api
+    container_name: vault-api
+    restart: unless-stopped
+    ports:
+      - "8223:8000"
+    volumes:
+      - /var/local/mydocker/compose-files/caddy/caddy-root.crt:/certs/caddy-root.crt:ro
+    environment:
+      - VAULT_URL=https://mykeyvault.lan
+      - NODE_EXTRA_CA_CERTS=/certs/caddy-root.crt
+      - VAULT_API_TOKEN=${VAULT_API_TOKEN:-}
+      - BW_CLIENTID=${BW_CLIENTID:-}
+      - BW_CLIENTSECRET=${BW_CLIENTSECRET:-}
+      - BW_PASSWORD=${BW_PASSWORD:-}
+    extra_hosts:
+      - "mykeyvault.lan:host-gateway"
+    depends_on:
+      mykeyvault:
+        condition: service_healthy
+    networks:
+      - mykeyvault-net
+
+networks:
+  mykeyvault-net:
+    name: mykeyvault-net
