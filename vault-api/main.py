@@ -40,20 +40,27 @@ def _run(args: list[str], input_text: str | None = None) -> tuple[str, str, int]
 def _ensure_ready() -> str:
     global _session, _configured
 
-    if not _configured:
-        _, stderr, rc = _run(["config", "server", VAULT_URL])
-        if rc != 0:
-            raise RuntimeError(f"bw config: {stderr.strip()}")
-        _configured = True
-
     if _session:
         return _session
 
     stdout, _, _ = _run(["status"])
     try:
-        status = json.loads(stdout).get("status", "unauthenticated")
+        status_obj = json.loads(stdout)
     except Exception:
-        status = "unauthenticated"
+        status_obj = {}
+    status = status_obj.get("status", "unauthenticated")
+
+    if not _configured:
+        # `bw config server` ist nur erlaubt UND nur noetig, solange kein Account
+        # eingerichtet ist — bw lehnt es mit "Logout required before server config
+        # update" ab, sobald ein User eingeloggt ist. Nach Container-Neustart wird
+        # _configured zurueckgesetzt, der persistente bw-Stand bleibt aber ggf.
+        # eingeloggt → daher auf den Live-Status pruefen, nicht nur auf das Flag.
+        if status == "unauthenticated" and status_obj.get("serverUrl") != VAULT_URL:
+            _, stderr, rc = _run(["config", "server", VAULT_URL])
+            if rc != 0:
+                raise RuntimeError(f"bw config: {stderr.strip()}")
+        _configured = True
 
     if status == "unauthenticated":
         if not BW_CLIENTID or not BW_CLIENTSECRET:
