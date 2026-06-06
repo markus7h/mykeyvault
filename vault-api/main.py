@@ -1,6 +1,10 @@
 import os
+import time
 import subprocess
 import json
+import urllib.request
+import urllib.error
+import urllib.parse
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -11,6 +15,12 @@ VAULT_API_TOKEN = os.environ.get("VAULT_API_TOKEN", "")
 BW_CLIENTID = os.environ.get("BW_CLIENTID", "")
 BW_CLIENTSECRET = os.environ.get("BW_CLIENTSECRET", "")
 BW_PASSWORD = os.environ.get("BW_PASSWORD", "")
+
+# `bw serve` laeuft dauerhaft entsperrt im Container und bindet localhost:8087.
+# Alle Vault-Operationen gehen ueber dessen lokale REST-API statt pro Request
+# einen `bw`-CLI-Subprozess zu spawnen (Cold-Start ~1,3-2,3s je Aufruf).
+SERVE_BASE = "http://localhost:8087"
+_serve_proc: subprocess.Popen | None = None
 
 _session: str | None = None
 _configured: bool = False
@@ -38,6 +48,9 @@ def _run(args: list[str], input_text: str | None = None) -> tuple[str, str, int]
 
 
 def _ensure_ready() -> str:
+    """Einmaliger CLI-Login/Config/Unlock beim Startup. `bw serve` hat keinen
+    Login-Endpoint, daher muss der Account vorab per CLI eingerichtet und einmal
+    entsperrt werden; der Session-Token startet dann den serve-Daemon entsperrt."""
     global _session, _configured
 
     if _session:
@@ -81,34 +94,92 @@ def _ensure_ready() -> str:
     return _session
 
 
-def _bw(args: list[str], input_text: str | None = None) -> str:
-    global _session
+def _request(method: str, path: str, json_body: dict | None = None) -> tuple[int, dict]:
+    """Roh-HTTP-Call gegen den serve-Daemon. Gibt (status_code, parsed_json) zurueck,
+    auch bei non-2xx (urllib.HTTPError wird abgefangen)."""
+    data = json.dumps(json_body).encode() if json_body is not None else None
+    req = urllib.request.Request(SERVE_BASE + path, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode()
+            return resp.status, (json.loads(body) if body else {})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        try:
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {"message": body}
+        return e.code, parsed
+
+
+def _unlock() -> None:
+    if not BW_PASSWORD:
+        raise RuntimeError("BW_PASSWORD not set")
+    _, payload = _request("POST", "/unlock", {"password": BW_PASSWORD})
+    if not payload.get("success", False):
+        raise RuntimeError(f"serve unlock: {payload.get('message')}")
+
+
+def _api(method: str, path: str, json_body: dict | None = None):
+    """serve-API-Call. Parst {success, data}, gibt data zurueck, wirft bei Fehler.
+    Bei gesperrtem Vault (seltenes Auto-Lock) einmal entsperren und neu versuchen."""
+    status, payload = _request(method, path, json_body)
+    if status < 200 or status >= 300 or not payload.get("success", False):
+        if "locked" in (payload.get("message") or "").lower():
+            _unlock()
+            status, payload = _request(method, path, json_body)
+    if status < 200 or status >= 300 or not payload.get("success", False):
+        raise RuntimeError(payload.get("message") or f"serve {method} {path}: HTTP {status}")
+    return payload.get("data")
+
+
+def _start_serve() -> None:
+    """Startet den entsperrten serve-Daemon und wartet auf Bereitschaft."""
+    global _serve_proc
     session = _ensure_ready()
-    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": "0", "BW_SESSION": session}
-    result = subprocess.run(
-        ["bw"] + args,
-        capture_output=True,
-        text=True,
-        input=input_text,
+    tls_verify = "1" if os.environ.get("NODE_EXTRA_CA_CERTS") else "0"
+    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": tls_verify, "BW_SESSION": session}
+    _serve_proc = subprocess.Popen(
+        ["bw", "serve", "--hostname", "localhost", "--port", "8087"],
         env=env,
-        timeout=15,
     )
-    if result.returncode != 0:
-        _session = None
-        raise RuntimeError(f"bw {args[0]}: {result.stderr.strip()}")
-    return result.stdout
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            _, payload = _request("GET", "/status")
+            if payload.get("success"):
+                st = payload.get("data", {}).get("template", {}).get("status")
+                if st == "unlocked":
+                    return
+                if st == "locked":
+                    _unlock()
+                    return
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("bw serve did not become ready within 30s")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _start_serve()
     yield
+    global _session, _configured, _serve_proc
+    if _serve_proc is not None:
+        _serve_proc.terminate()
+        _serve_proc = None
     # reset session on shutdown so next startup re-authenticates
-    global _session, _configured
     _session = None
     _configured = False
 
 
 app = FastAPI(title="vault-api", lifespan=lifespan)
+
+
+def _get_object(item_name: str) -> dict:
+    return _api("GET", f"/object/item/{urllib.parse.quote(item_name)}")
 
 
 @app.get("/health")
@@ -119,11 +190,10 @@ def health():
 @app.get("/items", dependencies=[Depends(verify_token)])
 def list_items():
     try:
-        raw = _bw(["list", "items"])
-        items = json.loads(raw)
+        data = _api("GET", "/list/object/items")
         return [
             {"name": i["name"], "username": i.get("login", {}).get("username")}
-            for i in items
+            for i in data.get("data", [])
         ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -133,14 +203,12 @@ def list_items():
 def get_secret(item_name: str):
     try:
         # SSH-Keys (type 5) haben kein password-Feld; der private Key liegt in
-        # sshKey.privateKey. Fuer alle anderen Typen byte-genau ueber
-        # "bw get password" (kein .strip, damit ein zum Secret gehoerender
-        # abschliessender Newline bei PEM/SSH erhalten bleibt).
-        item = json.loads(_bw(["get", "item", item_name]))
+        # sshKey.privateKey. Fuer alle anderen Typen aus login.password.
+        item = _get_object(item_name)
         if item.get("type") == 5:
             password = item.get("sshKey", {}).get("privateKey", "")
         else:
-            password = _bw(["get", "password", item_name])
+            password = item.get("login", {}).get("password", "")
         return {"password": password}
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -149,7 +217,7 @@ def get_secret(item_name: str):
 @app.get("/ssh-key/{item_name}", dependencies=[Depends(verify_token)])
 def get_ssh_key(item_name: str):
     try:
-        item = json.loads(_bw(["get", "item", item_name]))
+        item = _get_object(item_name)
         sk = item.get("sshKey", {})
         return {
             "name": item["name"],
@@ -163,8 +231,7 @@ def get_ssh_key(item_name: str):
 @app.get("/item/{item_name}", dependencies=[Depends(verify_token)])
 def get_item(item_name: str):
     try:
-        raw = _bw(["get", "item", item_name])
-        item = json.loads(raw)
+        item = _get_object(item_name)
         return {
             "name": item["name"],
             "username": item.get("login", {}).get("username"),
@@ -195,9 +262,8 @@ def create_item(body: CreateItem):
             "notes": body.notes,
             "favorite": False,
         }
-        encoded = _bw(["encode"], json.dumps(payload)).strip()
-        _bw(["create", "item", encoded])
-        _bw(["sync"])
+        _api("POST", "/object/item", payload)
+        _api("POST", "/sync")
         return {"success": True, "name": body.name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -225,9 +291,8 @@ def create_ssh_key(body: CreateSshKey):
             "notes": body.notes,
             "favorite": False,
         }
-        encoded = _bw(["encode"], json.dumps(payload)).strip()
-        _bw(["create", "item", encoded])
-        _bw(["sync"])
+        _api("POST", "/object/item", payload)
+        _api("POST", "/sync")
         return {"success": True, "name": body.name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -242,18 +307,15 @@ class UpdateItem(BaseModel):
 @app.put("/items/{item_name}", dependencies=[Depends(verify_token)])
 def update_item(item_name: str, body: UpdateItem):
     try:
-        raw = _bw(["get", "item", item_name])
-        item = json.loads(raw)
+        item = _get_object(item_name)
         if body.password is not None:
             item.setdefault("login", {})["password"] = body.password
         if body.username is not None:
             item.setdefault("login", {})["username"] = body.username
         if body.notes is not None:
             item["notes"] = body.notes
-        item_id = item["id"]
-        encoded = _bw(["encode"], json.dumps(item)).strip()
-        _bw(["edit", "item", item_id, encoded])
-        _bw(["sync"])
+        _api("PUT", f"/object/item/{item['id']}", item)
+        _api("POST", "/sync")
         return {"success": True, "name": item_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -262,10 +324,9 @@ def update_item(item_name: str, body: UpdateItem):
 @app.delete("/items/{item_name}", dependencies=[Depends(verify_token)])
 def delete_item(item_name: str):
     try:
-        raw = _bw(["get", "item", item_name])
-        item_id = json.loads(raw)["id"]
-        _bw(["delete", "item", item_id])
-        _bw(["sync"])
+        item = _get_object(item_name)
+        _api("DELETE", f"/object/item/{item['id']}")
+        _api("POST", "/sync")
         return {"success": True, "name": item_name}
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
