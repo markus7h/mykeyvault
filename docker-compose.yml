@@ -45,6 +45,36 @@ services:
     networks:
       - mykeyvault-net
 
+  # MCP-Server (StreamableHTTP) — zentral, damit die vault_*-Tools ohne SMB-Mount
+  # auf jedem Client verfügbar sind. Bearer = ai-rem-api-token (MCP_AUTH_TOKEN);
+  # spricht vault-api intern über das compose-Netz an.
+  mykeyvault-mcp:
+    build:
+      context: ./mcp
+    image: mykeyvault-mcp:latest
+    container_name: mykeyvault-mcp
+    restart: unless-stopped
+    ports:
+      - "3458:3458"
+    environment:
+      - MCP_TRANSPORT=http
+      - HOST=0.0.0.0
+      - PORT=3458
+      - VAULT_API_URL=http://vault-api:8000
+      - VAULT_API_TOKEN=${VAULT_API_TOKEN:-}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN nicht gesetzt — ai-rem-api-token aus dem Vault in die .env schreiben}
+    depends_on:
+      vault-api:
+        condition: service_started
+    networks:
+      - mykeyvault-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3458/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 networks:
   mykeyvault-net:
     name: mykeyvault-net

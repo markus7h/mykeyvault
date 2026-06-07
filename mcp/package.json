@@ -1,6 +1,6 @@
 {
   "name": "mykeyvault-mcp",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "MCP server for mykeyvault (Vaultwarden)",
   "main": "dist/index.js",
   "scripts": {
@@ -11,9 +11,11 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.1.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"

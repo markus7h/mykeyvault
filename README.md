@@ -5,7 +5,7 @@ Self-hosted Passwort- / Secrets-Vault auf Basis von **Vaultwarden** (Bitwarden-k
 Dazu zwei eigene Komponenten, damit Automatisierung (Scripts, Claude/MCP) Secrets nutzen kann, **ohne dass das Secret jemals in einen Prompt-/Chat-Kontext gelangt**:
 
 - **`vault-api`** — schlanke FastAPI vor der `bw`-CLI (REST, Token-geschützt).
-- **`mcp`** — MCP-Server (stdio), der die vault-api als Tools für Claude bereitstellt.
+- **`mcp`** — MCP-Server (stdio **oder** StreamableHTTP), der die vault-api als Tools für Claude bereitstellt.
 
 > Hostnamen, IPs und Pfade in dieser README sind **Platzhalter** (`<your-server>`, `https://mykeyvault.lan`, …). An die eigene Umgebung anpassen bzw. per Env-Variablen überschreiben.
 
@@ -146,7 +146,7 @@ Der `mcp`-Server (`mcp/dist/index.js`, stdio) macht die vault-api für Claude nu
 |---|---|
 | `vault_list_items` | Einträge auflisten (kein Secret) |
 | `vault_create_item` | Login-Eintrag anlegen |
-| `vault_create_ssh_key` | SSH-Key anlegen — liest den privaten Key **lokal aus der Datei** (`private_key_path`), leitet Public-Key/Fingerprint via `ssh-keygen` ab; der Key wird nie als Parameter übergeben |
+| `vault_create_ssh_key` | SSH-Key anlegen — privater Key als **Inhalt** (`private_key`) oder **lokaler Pfad** (`private_key_path`); Public-Key analog (`public_key`/`public_key_path`), Fingerprint wird sonst aus dem Public-Key abgeleitet |
 | `vault_get_ssh_public_key` | Public-Key + Fingerprint eines SSH-Key-Eintrags |
 | `vault_write_secret` | Secret in eine Datei (`chmod 600`) schreiben, gibt nur den Pfad zurück |
 | `vault_run_with_secret` | Secret als Env-Variable in einen Shell-Befehl injizieren |
@@ -155,6 +155,15 @@ Der `mcp`-Server (`mcp/dist/index.js`, stdio) macht die vault-api für Claude nu
 **Datei vs. Env:** Für Konsumenten, die ein Secret aus einer Env-Variable lesen (Tokens, API-Keys), ist `vault_run_with_secret` vorzuziehen — nichts landet auf der Platte. Eine Datei ist nur nötig, wenn ein Tool zwingend einen Pfad will (SSH `-i`, PEM, kubeconfig); dafür ist `vault_run_with_secret_file` (mit Auto-Cleanup) der saubere Weg. `vault_write_secret` legt die Datei dauerhaft an und räumt **nicht** selbst auf.
 
 > Nach Änderungen am MCP-Code: `cd mcp && npm run build`. Neue Tools werden erst nach Neustart des MCP-Servers (neue Claude-Session) sichtbar.
+
+### Transport: stdio vs. HTTP
+
+Der MCP-Server läuft in zwei Modi (per `MCP_TRANSPORT`, Default `stdio`):
+
+- **`stdio`** (lokal): voller Funktionsumfang inkl. der lokal ausführenden Tools `vault_write_secret`, `vault_run_with_secret`, `vault_run_with_secret_file` (brauchen das Dateisystem des aufrufenden Rechners).
+- **`http`** (zentraler Container, StreamableHTTP unter `/mcp`): macht die vault-Tools auf **jedem** Client verfügbar — **ohne** dass der MCP-Code lokal/per Mount vorliegen muss. Es werden nur die reinen vault-api-Tools registriert (`vault_list_items`, `vault_create_item`, `vault_create_ssh_key`, `vault_get_ssh_public_key`); die lokal ausführenden Tools entfallen, da der Server sonst sein **eigenes** Dateisystem sähe. Bearer-Auth via `MCP_AUTH_TOKEN` (fail-closed), `/health` ohne Token.
+
+Env (http): `MCP_TRANSPORT=http`, `PORT` (Default `3458`), `HOST`, `VAULT_API_URL`, `VAULT_API_TOKEN`, `MCP_AUTH_TOKEN`. Hinter Caddy (`tls internal`) als eigene Domain (z. B. `https://keyvault-mcp.lan/mcp`) erreichbar; Client-Registrierung als `{"type":"http","url":…,"headers":{"Authorization":"Bearer …"}}`.
 
 ## Secrets
 
