@@ -165,6 +165,8 @@ Der MCP-Server läuft in zwei Modi (per `MCP_TRANSPORT`, Default `stdio`):
 
 Env (http): `MCP_TRANSPORT=http`, `PORT` (Default `3458`), `HOST`, `VAULT_API_URL`, `VAULT_API_TOKEN`, `MCP_AUTH_TOKEN`. Hinter Caddy (`tls internal`) als eigene Domain (z. B. `https://keyvault-mcp.lan/mcp`) erreichbar; Client-Registrierung als `{"type":"http","url":…,"headers":{"Authorization":"Bearer …"}}`.
 
+> **Claude-Clients (ai-rem-Setup):** Das ai-rem-Setup baut den MCP lokal (`git clone` + `npm run build` im `mcp/`-Ordner) und registriert ihn als **stdio**-Server (`{"type":"stdio","command":"node","args":["…/mcp/dist/index.js"],"env":{"VAULT_API_URL":…,"VAULT_API_TOKEN":…}}`). Damit sind die exec/file-Tools verfügbar und Secrets landen **nie** im LLM-Kontext, sondern nur im lokal gestarteten Subprozess. Fehlt Node/Git oder schlägt der Build fehl, fällt das Setup auf den HTTP-MCP zurück.
+
 ## Secrets
 
 - `VAULT_API_TOKEN` und die `BW_*`-Credentials leben ausschließlich in der `.env` im Compose-Verzeichnis (`chmod 600`, nicht im Repo).
