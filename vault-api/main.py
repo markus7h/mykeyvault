@@ -1,5 +1,7 @@
 import os
 import time
+import hmac
+import threading
 import subprocess
 import json
 import urllib.request
@@ -24,18 +26,26 @@ _serve_proc: subprocess.Popen | None = None
 
 _session: str | None = None
 _configured: bool = False
+_unlock_lock = threading.Lock()
 
 security = HTTPBearer()
 
 
 def verify_token(creds: HTTPAuthorizationCredentials = Security(security)) -> None:
-    if not VAULT_API_TOKEN or creds.credentials != VAULT_API_TOKEN:
+    if not VAULT_API_TOKEN or not hmac.compare_digest(creds.credentials, VAULT_API_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _tls_reject() -> str:
+    # bw liest NODE_TLS_REJECT_UNAUTHORIZED: "0" akzeptiert beliebige Zertifikate
+    # (MITM-Risiko). Default "1" (verify an). Self-hosted Vaultwarden mit interner
+    # CA: Cert via NODE_EXTRA_CA_CERTS einhaengen statt abschalten. Nur explizit
+    # ueber VAULT_INSECURE_TLS=1 deaktivieren.
+    return "0" if os.environ.get("VAULT_INSECURE_TLS") == "1" else "1"
+
+
 def _run(args: list[str], input_text: str | None = None) -> tuple[str, str, int]:
-    tls_verify = "1" if os.environ.get("NODE_EXTRA_CA_CERTS") else "0"
-    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": tls_verify}
+    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": _tls_reject()}
     result = subprocess.run(
         ["bw"] + args,
         capture_output=True,
@@ -128,8 +138,10 @@ def _api(method: str, path: str, json_body: dict | None = None):
     status, payload = _request(method, path, json_body)
     if status < 200 or status >= 300 or not payload.get("success", False):
         if "locked" in (payload.get("message") or "").lower():
-            _unlock()
-            status, payload = _request(method, path, json_body)
+            # Lock: parallele Requests sollen nicht gleichzeitig re-unlocken.
+            with _unlock_lock:
+                _unlock()
+                status, payload = _request(method, path, json_body)
     if status < 200 or status >= 300 or not payload.get("success", False):
         raise RuntimeError(payload.get("message") or f"serve {method} {path}: HTTP {status}")
     return payload.get("data")
@@ -139,8 +151,7 @@ def _start_serve() -> None:
     """Startet den entsperrten serve-Daemon und wartet auf Bereitschaft."""
     global _serve_proc
     session = _ensure_ready()
-    tls_verify = "1" if os.environ.get("NODE_EXTRA_CA_CERTS") else "0"
-    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": tls_verify, "BW_SESSION": session}
+    env = {**os.environ, "NODE_TLS_REJECT_UNAUTHORIZED": _tls_reject(), "BW_SESSION": session}
     _serve_proc = subprocess.Popen(
         ["bw", "serve", "--hostname", "localhost", "--port", "8087"],
         env=env,
@@ -176,6 +187,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="vault-api", lifespan=lifespan)
+
+
+def _maybe_sync() -> None:
+    # bw serve schreibt direkt zum Server; das Sync danach frischt nur den lokalen
+    # Cache. Pro Schreibvorgang ein Netz-Roundtrip — bei Bulk-Anlage abschaltbar
+    # via VAULT_SYNC_AFTER_WRITE=0. Default an.
+    if os.environ.get("VAULT_SYNC_AFTER_WRITE", "1") != "0":
+        _api("POST", "/sync")
 
 
 def _get_object(item_name: str) -> dict:
@@ -263,7 +282,7 @@ def create_item(body: CreateItem):
             "favorite": False,
         }
         _api("POST", "/object/item", payload)
-        _api("POST", "/sync")
+        _maybe_sync()
         return {"success": True, "name": body.name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -292,7 +311,7 @@ def create_ssh_key(body: CreateSshKey):
             "favorite": False,
         }
         _api("POST", "/object/item", payload)
-        _api("POST", "/sync")
+        _maybe_sync()
         return {"success": True, "name": body.name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -315,7 +334,7 @@ def update_item(item_name: str, body: UpdateItem):
         if body.notes is not None:
             item["notes"] = body.notes
         _api("PUT", f"/object/item/{item['id']}", item)
-        _api("POST", "/sync")
+        _maybe_sync()
         return {"success": True, "name": item_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -326,7 +345,7 @@ def delete_item(item_name: str):
     try:
         item = _get_object(item_name)
         _api("DELETE", f"/object/item/{item['id']}")
-        _api("POST", "/sync")
+        _maybe_sync()
         return {"success": True, "name": item_name}
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
