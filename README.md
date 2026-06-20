@@ -138,6 +138,10 @@ FastAPI-Wrapper um die `bw`-CLI, lauscht auf `http://<your-server>:8223`. Jeder 
 
 > **Namensauflösung:** `bw get` matcht Namen per Teilstring. Bei mehrdeutigem Treffer kommt „More than one result" — Item-Namen also eindeutig wählen.
 
+**TLS:** Die Kommunikation `bw` → Vaultwarden verifiziert Zertifikate standardmäßig (`NODE_TLS_REJECT_UNAUTHORIZED=1`). Self-hosted mit interner CA: das CA-Cert via `NODE_EXTRA_CA_CERTS` einhängen — **nicht** die Prüfung abschalten. `VAULT_INSECURE_TLS=1` deaktiviert die Verifikation komplett (akzeptiert beliebige Zertifikate → MITM der gesamten Secret-Kommunikation möglich); nur für lokale Tests, nie in Produktion.
+
+**Sync:** Schreibvorgänge (`POST/PUT/DELETE`) führen danach ein `bw sync` aus, um den lokalen Cache zu aktualisieren — ein Netz-Roundtrip pro Schreibvorgang. Für Bulk-Anlage via `VAULT_SYNC_AFTER_WRITE=0` abschaltbar (Default an).
+
 ## MCP-Tools
 
 Der `mcp`-Server (`mcp/dist/index.js`, stdio) macht die vault-api für Claude nutzbar. Leitprinzip: **Secrets erscheinen nie im Claude-Kontext** — sie laufen nur durch den MCP-/API-Prozess.
@@ -152,6 +156,8 @@ Der `mcp`-Server (`mcp/dist/index.js`, stdio) macht die vault-api für Claude nu
 | `vault_run_with_secret` | Secret als Env-Variable in einen Shell-Befehl injizieren |
 | `vault_run_with_secret_file` | Secret in eine Temp-Datei (`chmod 600`) schreiben, Befehl ausführen (`{}` / `$SECRET_FILE` = Pfad), Datei danach garantiert wieder löschen — für SSH-Keys/PEM, die einen Dateipfad verlangen |
 
+> ⚠️ **`vault_run_with_secret` / `vault_run_with_secret_file` führen beliebige Shell-Befehle aus** (`sh -c <command>` mit injiziertem Secret). Das ist die stärkste Capability des Servers — bewusst freigegeben und nur im **stdio**-Modus (lokales Client-FS) registriert. Cleanup der Temp-Datei erfolgt garantiert im `finally` (`chmod 600`). Im http-Modus entfallen diese Tools.
+
 **Datei vs. Env:** Für Konsumenten, die ein Secret aus einer Env-Variable lesen (Tokens, API-Keys), ist `vault_run_with_secret` vorzuziehen — nichts landet auf der Platte. Eine Datei ist nur nötig, wenn ein Tool zwingend einen Pfad will (SSH `-i`, PEM, kubeconfig); dafür ist `vault_run_with_secret_file` (mit Auto-Cleanup) der saubere Weg. `vault_write_secret` legt die Datei dauerhaft an und räumt **nicht** selbst auf.
 
 > Nach Änderungen am MCP-Code: `cd mcp && npm run build`. Neue Tools werden erst nach Neustart des MCP-Servers (neue Claude-Session) sichtbar.
@@ -164,6 +170,8 @@ Der MCP-Server läuft in zwei Modi (per `MCP_TRANSPORT`, Default `stdio`):
 - **`http`** (zentraler Container, StreamableHTTP unter `/mcp`): macht die vault-Tools auf **jedem** Client verfügbar — **ohne** dass der MCP-Code lokal/per Mount vorliegen muss. Es werden nur die reinen vault-api-Tools registriert (`vault_list_items`, `vault_create_item`, `vault_create_ssh_key`, `vault_get_ssh_public_key`); die lokal ausführenden Tools entfallen, da der Server sonst sein **eigenes** Dateisystem sähe. Bearer-Auth via `MCP_AUTH_TOKEN` (fail-closed), `/health` ohne Token.
 
 Env (http): `MCP_TRANSPORT=http`, `PORT` (Default `3458`), `HOST`, `VAULT_API_URL`, `VAULT_API_TOKEN`, `MCP_AUTH_TOKEN`. Hinter Caddy (`tls internal`) als eigene Domain (z. B. `https://keyvault-mcp.lan/mcp`) erreichbar; Client-Registrierung als `{"type":"http","url":…,"headers":{"Authorization":"Bearer …"}}`.
+
+> **MCP → vault-api (`VAULT_API_URL`):** Default `http://localhost:8223` — unkritisch auf demselben Host. Laufen MCP und vault-api auf **getrennten** Hosts, ginge sonst Secret + `VAULT_API_TOKEN` im Klartext übers Netz: dann `VAULT_API_URL` auf eine `https://`-Adresse (vault-api hinter Reverse-Proxy/Caddy) setzen, nie Plain-HTTP über Netzgrenzen.
 
 > **Claude-Clients (ai-rem-Setup):** Das ai-rem-Setup baut den MCP lokal (`git clone` + `npm run build` im `mcp/`-Ordner) und registriert ihn als **stdio**-Server (`{"type":"stdio","command":"node","args":["…/mcp/dist/index.js"],"env":{"VAULT_API_URL":…,"VAULT_API_TOKEN":…}}`). Damit sind die exec/file-Tools verfügbar und Secrets landen **nie** im LLM-Kontext, sondern nur im lokal gestarteten Subprozess. Fehlt Node/Git oder schlägt der Build fehl, fällt das Setup auf den HTTP-MCP zurück.
 
