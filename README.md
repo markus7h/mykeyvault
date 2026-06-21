@@ -199,6 +199,18 @@ Für konsistentes SQLite vorher Container stoppen oder mit `sqlite3 .backup` arb
 - Persönliche Login-Credentials → mykeyvault (Bitwarden-Client).
 - Tool-/Script-Secrets & SSH-Keys → vault-api (REST) bzw. mykeyvault-MCP (siehe oben).
 
+## Versionierung & Release
+
+**Eine** Versionsnummer fürs ganze Repo — die **Git-Tag-Version** `vX.Y.Z` ist die Single Source of Truth (Release = Git-Release). Beide versionierten Stellen tragen dieselbe Nummer:
+
+| Stelle | Rolle |
+|---|---|
+| **Git-Tag** `vX.Y.Z` | *die* Release-Version; löst `docker-publish.yml` aus (Image `magic3arkus/mykeyvault`) |
+| `VERSION` in `vault-api/main.py` | Code-seitiger Anker des released Images; auch unter `/health` sichtbar |
+| `version` in `mcp/package.json` (+ lock) | npm-Version der MCP-Komponente, **auf dieselbe Nummer geführt** |
+
+**Release-Ablauf:** `VERSION` in `vault-api/main.py` **und** `mcp/package.json` auf `X.Y.Z` bumpen → committen → annotierten Tag `vX.Y.Z` pushen. Die CI erzwingt `vault-api`-`VERSION == Tag` und bricht bei Mismatch ab — kein versehentlicher No-op- oder Drift-Release.
+
 ## Verwandte Projekte
 
 - [ai-rem](https://github.com/markus7h/ai-rem) — Langzeit-Gedächtnis als Knowledge-Graph-MCP. Hält Kontext/Preferences, **aber keine Secrets** — die liegen hier in mykeyvault.

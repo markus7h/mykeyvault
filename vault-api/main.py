@@ -12,6 +12,13 @@ from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
+# Release-Versionsanker des vault-api-Images. MUSS dem Git-Tag entsprechen
+# (Tag vX.Y.Z → VERSION "X.Y.Z") — die docker-publish-CI bricht bei Mismatch hart ab.
+# Das ist die Single Source of Truth des Releases; ein Tag ohne VERSION-Bump ist ein
+# Fehler (kein No-op-Release). Unabhängig davon hat die MCP-Komponente unter mcp/ ihre
+# eigene, separate npm-Version.
+VERSION = "1.4.2"
+
 VAULT_URL = os.environ.get("VAULT_URL", "http://mykeyvault:80")
 VAULT_API_TOKEN = os.environ.get("VAULT_API_TOKEN", "")
 BW_CLIENTID = os.environ.get("BW_CLIENTID", "")
@@ -203,7 +210,7 @@ def _get_object(item_name: str) -> dict:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": VERSION}
 
 
 @app.get("/items", dependencies=[Depends(verify_token)])
