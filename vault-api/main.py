@@ -17,7 +17,7 @@ from pydantic import BaseModel
 # Das ist die Single Source of Truth des Releases; ein Tag ohne VERSION-Bump ist ein
 # Fehler (kein No-op-Release). Unabhängig davon hat die MCP-Komponente unter mcp/ ihre
 # eigene, separate npm-Version.
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 VAULT_URL = os.environ.get("VAULT_URL", "http://mykeyvault:80")
 VAULT_API_TOKEN = os.environ.get("VAULT_API_TOKEN", "")
@@ -216,6 +216,11 @@ def health():
 @app.get("/items", dependencies=[Depends(verify_token)])
 def list_items():
     try:
+        # `bw serve` liest aus seinem lokalen Cache; ausserhalb der API (z.B. im
+        # Web-Vault) angelegte Eintraege fehlen sonst, bis irgendein Write synct.
+        # Vor dem Listen einmal auffrischen — gated ueber denselben Schalter
+        # (VAULT_SYNC_AFTER_WRITE=0 schaltet auch das ab).
+        _maybe_sync()
         data = _api("GET", "/list/object/items")
         return [
             {"name": i["name"], "username": i.get("login", {}).get("username")}

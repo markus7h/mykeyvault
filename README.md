@@ -127,7 +127,7 @@ FastAPI-Wrapper um die `bw`-CLI, lauscht auf `http://<your-server>:8223`. Jeder 
 | Methode & Pfad | Zweck |
 |---|---|
 | `GET /health` | Liveness (ohne Token) |
-| `GET /items` | alle Einträge (Name + Username; **kein** Secret) |
+| `GET /items` | alle Einträge (Name + Username; **kein** Secret); synct vorher den Cache, damit extern angelegte Einträge erscheinen |
 | `GET /item/{name}` | Name + Username eines Eintrags |
 | `GET /secret/{name}` | Passwort/Secret byte-genau; bei SSH-Keys (Typ 5) der `privateKey` |
 | `POST /items` | Login-Eintrag anlegen (`name`, `username`, `password`, `url?`, `notes?`) |
@@ -140,7 +140,7 @@ FastAPI-Wrapper um die `bw`-CLI, lauscht auf `http://<your-server>:8223`. Jeder 
 
 **TLS:** Die Kommunikation `bw` → Vaultwarden verifiziert Zertifikate standardmäßig (`NODE_TLS_REJECT_UNAUTHORIZED=1`). Self-hosted mit interner CA: das CA-Cert via `NODE_EXTRA_CA_CERTS` einhängen — **nicht** die Prüfung abschalten. `VAULT_INSECURE_TLS=1` deaktiviert die Verifikation komplett (akzeptiert beliebige Zertifikate → MITM der gesamten Secret-Kommunikation möglich); nur für lokale Tests, nie in Produktion.
 
-**Sync:** Schreibvorgänge (`POST/PUT/DELETE`) führen danach ein `bw sync` aus, um den lokalen Cache zu aktualisieren — ein Netz-Roundtrip pro Schreibvorgang. Für Bulk-Anlage via `VAULT_SYNC_AFTER_WRITE=0` abschaltbar (Default an).
+**Sync:** Schreibvorgänge (`POST/PUT/DELETE`) führen danach ein `bw sync` aus, um den lokalen Cache zu aktualisieren — ein Netz-Roundtrip pro Schreibvorgang. Zusätzlich synct `GET /items` **vor** dem Lesen, da `bw serve` aus seinem lokalen Cache liefert und außerhalb der API (z. B. im Web-Vault) angelegte Einträge sonst fehlen. Beides ist via `VAULT_SYNC_AFTER_WRITE=0` abschaltbar (Default an).
 
 ## MCP-Tools
 
