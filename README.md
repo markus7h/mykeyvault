@@ -125,6 +125,14 @@ export BW_SESSION=$(bw unlock --raw)
 
 FastAPI-Wrapper um die `bw`-CLI, lauscht auf `http://<your-server>:8223`. Jeder Aufruf außer `/health` braucht den Header `Authorization: Bearer $VAULT_API_TOKEN`. Login/Unlock passieren intern via `BW_CLIENTID/SECRET` + `BW_PASSWORD`; die Session wird im Prozess gehalten.
 
+> **`bw`-CLI ist auf `2026.6.0` gepinnt** (`vault-api/Dockerfile`). Ab `2026.7.0`
+> stirbt die CLI beim Vault-Sync an **SSH-Key-Items** — also genau an dem Typ, den
+> dieses Repo über `POST /ssh-keys` selbst anlegt:
+> `invalid type: JsValue(Object({…"privateKey"…})), expected a string` (WASM-Abbruch).
+> `bw serve` startet dann nicht und vault-api antwortet auf jeden Secret-Abruf mit
+> `404 Connection refused`. Der Pin darf nur zusammen mit einem Test des
+> Secret-Abrufs angehoben werden — ungepinnt zieht jeder Rebuild die neueste CLI.
+
 | Methode & Pfad | Zweck |
 |---|---|
 | `GET /health` | Liveness (ohne Token) |
