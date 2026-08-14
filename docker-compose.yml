@@ -11,9 +11,15 @@ services:
       - SIGNUPS_ALLOWED=false
       - DOMAIN=https://mykeyvault.lan
       - LOG_LEVEL=warn
+      # Rocket (Rust) bindet mit :: dual-stack -- IPv4 ueber den published
+      # Port bleibt erhalten.
+      - "ROCKET_ADDRESS=::"
       - ADMIN_TOKEN=${VAULTWARDEN_ADMIN_TOKEN:-}
     networks:
-      - mykeyvault-net
+      mykeyvault-net:
+        # Feste Adressen, damit der Reverse-Proxy die Container direkt
+        # adressieren kann (Host-ID = published Port, nur zur Lesbarkeit).
+        ipv6_address: fd00:24:9:68:26::8222
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80/alive"]
       interval: 10s
@@ -43,7 +49,8 @@ services:
       mykeyvault:
         condition: service_healthy
     networks:
-      - mykeyvault-net
+      mykeyvault-net:
+        ipv6_address: fd00:24:9:68:26::8223
 
   # MCP-Server (StreamableHTTP) — zentral, damit die vault_*-Tools ohne SMB-Mount
   # auf jedem Client verfügbar sind. Bearer = ai-rem-api-token (MCP_AUTH_TOKEN);
@@ -58,7 +65,8 @@ services:
       - "3458:3458"
     environment:
       - MCP_TRANSPORT=http
-      - HOST=0.0.0.0
+      # Node bindet mit :: dual-stack (kein IPV6_V6ONLY).
+      - "HOST=::"
       - PORT=3458
       - VAULT_API_URL=http://vault-api:8000
       - VAULT_API_TOKEN=${VAULT_API_TOKEN:-}
@@ -67,7 +75,8 @@ services:
       vault-api:
         condition: service_started
     networks:
-      - mykeyvault-net
+      mykeyvault-net:
+        ipv6_address: fd00:24:9:68:26::3458
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3458/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 30s
@@ -76,5 +85,15 @@ services:
       start_period: 10s
 
 networks:
+  # IPv6 aus dem gerouteten Praefix fd00:24:9:68::/64 (Rueckroute im Router auf
+  # den Docker-Host). gateway_mode_ipv6=routed -> kein NAT66. Fuer andere
+  # Deployments Praefix anpassen oder enable_ipv6 entfernen.
   mykeyvault-net:
     name: mykeyvault-net
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16
+        - subnet: fd00:24:9:68:26::/80
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv6: routed
