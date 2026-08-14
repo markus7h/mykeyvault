@@ -39,6 +39,7 @@ Dazu zwei eigene Komponenten, damit Automatisierung (Scripts, Claude/MCP) Secret
 | Admin-Panel | `https://mykeyvault.lan/admin` |
 | vault-api Container | `vault-api` |
 | vault-api Port | `8223 → 8000` (`http://<your-server>:8223`) |
+| IPv6 | `mykeyvault-net` führt `fd00:24:9:68:26::/80` (`gateway_mode_ipv6=routed`); feste Adressen `::8222` (vaultwarden), `::8223` (vault-api), `::3458` (MCP). Alle drei binden dual-stack, die published IPv4-Ports funktionieren also weiter |
 
 ## Architektur
 
