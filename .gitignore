@@ -2,5 +2,3 @@
 *.env.local
 node_modules/
 dist/
-__pycache__/
-*.pyc
