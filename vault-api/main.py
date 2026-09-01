@@ -17,7 +17,7 @@ from pydantic import BaseModel
 # Das ist die Single Source of Truth des Releases; ein Tag ohne VERSION-Bump ist ein
 # Fehler (kein No-op-Release). Unabhängig davon hat die MCP-Komponente unter mcp/ ihre
 # eigene, separate npm-Version.
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 
 VAULT_URL = os.environ.get("VAULT_URL", "http://mykeyvault:80")
 VAULT_API_TOKEN = os.environ.get("VAULT_API_TOKEN", "")
