@@ -1,6 +1,6 @@
 {
   "name": "mykeyvault-mcp",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "MCP server for mykeyvault (Vaultwarden)",
   "main": "dist/index.js",
   "scripts": {
