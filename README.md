@@ -84,7 +84,10 @@ Das Script:
 **Wichtig**:
 
 - Bei Erst-Deploy `BW_CLIENTID` / `BW_CLIENTSECRET` (aus den Vaultwarden-Account-Einstellungen) und `BW_PASSWORD` (Master-Passwort) in die `.env` auf dem Zielhost eintragen — sonst kann `vault-api` den Vault nicht entsperren.
-- Den ausgegebenen `VAULT_API_TOKEN` auf dem Claude-Host in `~/.claude.json` unter `mcpServers.mykeyvault.env.VAULT_API_TOKEN` setzen (zusammen mit `VAULT_API_URL=http://<your-server>:8223`).
+- Den `VAULT_API_TOKEN` auf dem Claude-Host in `~/.claude.json` unter `mcpServers.mykeyvault.env.VAULT_API_TOKEN` setzen. `setup.sh` gibt ihn bewusst **nicht** auf stdout aus (Shell-History/Terminal-Logs) — auf dem Zielhost aus der `0600`-`.env` lesen: `ssh <your-server> "grep '^VAULT_API_TOKEN=' /var/local/mydocker/compose-files/mykeyvault/.env"`.
+- `VAULT_API_URL` auf die **https**-Adresse hinter Caddy setzen (`https://<your-server>`), sobald Client und `vault-api` auf getrennten Hosts laufen — sonst gehen Bearer und abgerufene Secrets im Klartext übers Netz. Nur bei Client *und* vault-api auf demselben Host ist `http://<your-server>:8223` unkritisch.
+- `~/.claude.json` hält den Token im Klartext: `chmod 600` (Default ist vielerorts `0664` = weltlesbar).
+- `VAULTWARDEN_ADMIN_TOKEN` in der `.env` als Argon2id-PHC hinterlegen, nicht als Klartext: `docker exec -it mykeyvault /vaultwarden hash --preset owasp`. Der PHC-String enthält `$` — in der `.env` als `$$` escapen, sonst frisst die Compose-Interpolation die Zeichen.
 - Re-Deploy nach Code-Änderung an `vault-api`/Compose: einfach erneut `bash setup.sh` (idempotent; vorhandene `.env` bleibt unangetastet).
 
 ## Caddy-Reverse-Proxy

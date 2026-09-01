@@ -39,9 +39,12 @@ BW_CLIENTSECRET=
 BW_PASSWORD=
 EOF
 chmod 600 $REMOTE_COMPOSE_DIR/.env"
+    unset TOKEN
     echo "✓ .env erstellt (BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD noch eintragen!)"
-    echo "  VAULT_API_TOKEN=$TOKEN"
-    echo "  (Token auf Claude-Host in ~/.claude.json als VAULT_API_TOKEN eintragen)"
+    # ponytail: Token bewusst NICHT auf stdout — landet sonst in Shell-History
+    # und Terminal-Logs. Wer ihn braucht, liest ihn aus der 0600-.env.
+    echo "  Token auf Claude-Host in ~/.claude.json als VAULT_API_TOKEN eintragen:"
+    echo "  ssh $DEPLOY_HOST \"grep '^VAULT_API_TOKEN=' $REMOTE_COMPOSE_DIR/.env\""
 else
     echo "✓ .env bereits vorhanden"
 fi
