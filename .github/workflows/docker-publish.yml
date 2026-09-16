@@ -35,11 +35,17 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           echo "vault-api/main.py VERSION = ${CODE_VERSION}"
           echo "Tag                       = ${GITHUB_REF_NAME} (→ ${TAG_VERSION})"
+          PKG_VERSION=$(python3 -c "import json; print(json.load(open('mcp/package.json'))['version'])")
+          echo "mcp/package.json version  = ${PKG_VERSION}"
           if [ "$CODE_VERSION" != "$TAG_VERSION" ]; then
             echo "::error::VERSION (${CODE_VERSION}) ≠ Tag (${TAG_VERSION}) — vault-api/main.py vor dem Tag anpassen."
             exit 1
           fi
-          echo "✅ VERSION und Tag stimmen überein."
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::mcp/package.json version (${PKG_VERSION}) ≠ Tag (${TAG_VERSION}) — vor dem Tag anpassen."
+            exit 1
+          fi
+          echo "✅ VERSION, mcp/package.json und Tag stimmen überein."
 
       - name: Build and push (vault-api)
         uses: docker/build-push-action@v6

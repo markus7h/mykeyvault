@@ -9,6 +9,11 @@ import express from "express";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { createRequire } from "module";
+
+// Version kommt aus mcp/package.json (relativ zu dist/index.js), damit die vom
+// Server gemeldete Nummer nicht neben package.json/Tag wegdriften kann.
+const VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
 const BASE = process.env.VAULT_API_URL ?? "http://localhost:8223";
 const TOKEN = process.env.VAULT_API_TOKEN ?? "";
@@ -56,7 +61,7 @@ function sshFingerprint(publicKey: string): string {
  * brauchen — über http liefe das auf dem Server.
  */
 function buildServer(): McpServer {
-  const server = new McpServer({ name: "mykeyvault", version: "2.1.0" });
+  const server = new McpServer({ name: "mykeyvault", version: VERSION });
 
   server.tool(
     "vault_list_items",
