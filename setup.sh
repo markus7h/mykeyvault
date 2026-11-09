@@ -27,6 +27,11 @@ scp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/docker-co
 scp "$SCRIPT_DIR/vault-api/main.py" "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/vault-api/main.py"
 scp "$SCRIPT_DIR/vault-api/Dockerfile" "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/vault-api/Dockerfile"
 scp "$SCRIPT_DIR/vault-api/requirements.txt" "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/vault-api/requirements.txt"
+
+# mykeyvault-mcp: compose baut aus ./mcp — ohne Kopie baute es aus veraltetem (oder fehlendem) Kontext
+ssh "$DEPLOY_HOST" "mkdir -p $REMOTE_COMPOSE_DIR/mcp/src"
+scp "$SCRIPT_DIR"/mcp/{Dockerfile,.npmrc,package.json,package-lock.json,tsconfig.json} "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/mcp/"
+scp "$SCRIPT_DIR"/mcp/src/*.ts "$DEPLOY_HOST:$REMOTE_COMPOSE_DIR/mcp/src/"
 echo "✓ Dateien übertragen"
 
 # .env anlegen falls nicht vorhanden
