@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { toNodeHandler } from "@modelcontextprotocol/node";
 import { z } from "zod";
 import { spawnSync } from "child_process";
 import { createHash, timingSafeEqual } from "crypto";
@@ -63,26 +63,32 @@ function sshFingerprint(publicKey: string): string {
 function buildServer(): McpServer {
   const server = new McpServer({ name: "mykeyvault", version: VERSION });
 
-  server.tool(
+  server.registerTool(
     "vault_list_items",
-    "Listet alle Vault-Einträge mit Name und Benutzername. Kein Passwort / Secret im Output.",
-    {},
+    {
+      description:
+        "Listet alle Vault-Einträge mit Name und Benutzername. Kein Passwort / Secret im Output.",
+      inputSchema: z.object({}),
+    },
     async () => {
       const items = await api<{ name: string; username: string | null }[]>("/items");
       return { content: [{ type: "text" as const, text: JSON.stringify(items, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "vault_create_item",
-    "Legt einen neuen Login-Eintrag im Vault an. " +
-      "Das Passwort erscheint als Eingabe-Parameter — es wird aber nicht in der Antwort zurückgegeben.",
     {
-      name: z.string().describe("Name des Eintrags"),
-      username: z.string().describe("Benutzername"),
-      password: z.string().describe("Passwort / Secret"),
-      notes: z.string().optional().describe("Notizen (optional)"),
-      url: z.string().optional().describe("URL (optional)"),
+      description:
+        "Legt einen neuen Login-Eintrag im Vault an. " +
+          "Das Passwort erscheint als Eingabe-Parameter — es wird aber nicht in der Antwort zurückgegeben.",
+      inputSchema: z.object({
+        name: z.string().describe("Name des Eintrags"),
+        username: z.string().describe("Benutzername"),
+        password: z.string().describe("Passwort / Secret"),
+        notes: z.string().optional().describe("Notizen (optional)"),
+        url: z.string().optional().describe("URL (optional)"),
+      }),
     },
     async ({ name, username, password, notes, url }) => {
       const result = await api<{ success: boolean; name: string }>("/items", {
@@ -93,23 +99,26 @@ function buildServer(): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "vault_create_ssh_key",
-    "Legt einen SSH-Key als nativen SSH-Key-Eintrag (Bitwarden-Typ 5) im Vault an. " +
-      "Der private Key kann als Inhalt (private_key) ODER als lokaler Dateipfad (private_key_path) " +
-      "übergeben werden — über http wird der Inhalt benötigt, da der Server kein lokales Dateisystem " +
-      "des Clients sieht. Public-Key analog (public_key / public_key_path); der Fingerprint wird, " +
-      "falls nicht angegeben, aus dem Public-Key abgeleitet.",
     {
-      name: z.string().describe("Name des Eintrags"),
-      private_key: z.string().optional().describe("Privater SSH-Key als Inhalt (Alternative zu private_key_path)"),
-      private_key_path: z.string().optional().describe("Lokaler Pfad zum privaten SSH-Key (nur stdio/lokal)"),
-      public_key: z.string().optional().describe("Public-Key als Inhalt (Alternative zu public_key_path)"),
-      public_key_path: z.string().optional().describe(
-        "Pfad zum Public-Key; Standard: <private_key_path>.pub (nur stdio/lokal)"
-      ),
-      fingerprint: z.string().optional().describe("SHA256-Fingerprint; wird sonst aus dem Public-Key abgeleitet"),
-      notes: z.string().optional().describe("Notizen (optional)"),
+      description:
+        "Legt einen SSH-Key als nativen SSH-Key-Eintrag (Bitwarden-Typ 5) im Vault an. " +
+          "Der private Key kann als Inhalt (private_key) ODER als lokaler Dateipfad (private_key_path) " +
+          "übergeben werden — über http wird der Inhalt benötigt, da der Server kein lokales Dateisystem " +
+          "des Clients sieht. Public-Key analog (public_key / public_key_path); der Fingerprint wird, " +
+          "falls nicht angegeben, aus dem Public-Key abgeleitet.",
+      inputSchema: z.object({
+        name: z.string().describe("Name des Eintrags"),
+        private_key: z.string().optional().describe("Privater SSH-Key als Inhalt (Alternative zu private_key_path)"),
+        private_key_path: z.string().optional().describe("Lokaler Pfad zum privaten SSH-Key (nur stdio/lokal)"),
+        public_key: z.string().optional().describe("Public-Key als Inhalt (Alternative zu public_key_path)"),
+        public_key_path: z.string().optional().describe(
+          "Pfad zum Public-Key; Standard: <private_key_path>.pub (nur stdio/lokal)"
+        ),
+        fingerprint: z.string().optional().describe("SHA256-Fingerprint; wird sonst aus dem Public-Key abgeleitet"),
+        notes: z.string().optional().describe("Notizen (optional)"),
+      }),
     },
     async ({ name, private_key, private_key_path, public_key, public_key_path, fingerprint, notes }) => {
       let privateKey = private_key;
@@ -142,10 +151,13 @@ function buildServer(): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "vault_get_ssh_public_key",
-    "Gibt Public-Key und Fingerprint eines SSH-Key-Eintrags zurück (kein privater Key).",
-    { item_name: z.string().describe("Name des Vault-Eintrags") },
+    {
+      description:
+        "Gibt Public-Key und Fingerprint eines SSH-Key-Eintrags zurück (kein privater Key).",
+      inputSchema: z.object({ item_name: z.string().describe("Name des Vault-Eintrags") }),
+    },
     async ({ item_name }) => {
       const data = await api<{ name: string; public_key: string | null; fingerprint: string | null }>(
         `/ssh-key/${encodeURIComponent(item_name)}`
@@ -156,13 +168,16 @@ function buildServer(): McpServer {
 
   // ── Lokal ausführende Tools: nur im stdio-Modus (brauchen das Client-FS) ──
   if (!HTTP_MODE) {
-    server.tool(
+    server.registerTool(
       "vault_write_secret",
-      "Schreibt das Passwort eines Vault-Eintrags in eine lokale Datei (chmod 600). " +
-        "Gibt nur den Dateipfad zurück — das Secret selbst erscheint nie im Kontext.",
       {
-        item_name: z.string().describe("Name des Vault-Eintrags"),
-        output_path: z.string().optional().describe("Zieldatei; Standard: /tmp/vault-secret-<ts>"),
+        description:
+          "Schreibt das Passwort eines Vault-Eintrags in eine lokale Datei (chmod 600). " +
+            "Gibt nur den Dateipfad zurück — das Secret selbst erscheint nie im Kontext.",
+        inputSchema: z.object({
+          item_name: z.string().describe("Name des Vault-Eintrags"),
+          output_path: z.string().optional().describe("Zieldatei; Standard: /tmp/vault-secret-<ts>"),
+        }),
       },
       async ({ item_name, output_path }) => {
         const { password } = await api<{ password: string }>(`/secret/${encodeURIComponent(item_name)}`);
@@ -172,17 +187,20 @@ function buildServer(): McpServer {
       }
     );
 
-    server.tool(
+    server.registerTool(
       "vault_run_with_secret",
-      "Führt einen Shell-Befehl aus und injiziert dabei das Passwort eines Vault-Eintrags als Env-Variable. " +
-        "Das Secret erscheint nicht im Rückgabewert — solange der Befehl es nicht selbst ausgibt.",
       {
-        item_name: z.string().describe("Name des Vault-Eintrags"),
-        env_var: z.string().describe("Env-Variablen-Name für das Passwort (z.B. MY_SECRET)"),
-        command: z.string().describe("Shell-Befehl (wird via sh -c ausgeführt)"),
-        username_env_var: z.string().optional().describe(
-          "Falls gesetzt: Benutzername des Eintrags als diese Env-Variable mitgeben"
-        ),
+        description:
+          "Führt einen Shell-Befehl aus und injiziert dabei das Passwort eines Vault-Eintrags als Env-Variable. " +
+            "Das Secret erscheint nicht im Rückgabewert — solange der Befehl es nicht selbst ausgibt.",
+        inputSchema: z.object({
+          item_name: z.string().describe("Name des Vault-Eintrags"),
+          env_var: z.string().describe("Env-Variablen-Name für das Passwort (z.B. MY_SECRET)"),
+          command: z.string().describe("Shell-Befehl (wird via sh -c ausgeführt)"),
+          username_env_var: z.string().optional().describe(
+            "Falls gesetzt: Benutzername des Eintrags als diese Env-Variable mitgeben"
+          ),
+        }),
       },
       async ({ item_name, env_var, command, username_env_var }) => {
         const { password } = await api<{ password: string }>(`/secret/${encodeURIComponent(item_name)}`);
@@ -208,17 +226,20 @@ function buildServer(): McpServer {
       }
     );
 
-    server.tool(
+    server.registerTool(
       "vault_run_with_secret_file",
-      "Schreibt das Secret eines Vault-Eintrags in eine temporäre Datei (chmod 600), führt einen Shell-Befehl aus " +
-        "und löscht die Datei danach garantiert wieder (auch bei Fehler). Im Befehl wird '{}' durch den Temp-Pfad " +
-        "ersetzt, zusätzlich steht er als $SECRET_FILE bereit. Für SSH-Keys / PEM, die einen Dateipfad verlangen. " +
-        "Das Secret erscheint nicht im Rückgabewert — solange der Befehl es nicht selbst ausgibt.",
       {
-        item_name: z.string().describe("Name des Vault-Eintrags"),
-        command: z.string().describe(
-          "Shell-Befehl (sh -c); '{}' und $SECRET_FILE = Pfad der temporären Secret-Datei"
-        ),
+        description:
+          "Schreibt das Secret eines Vault-Eintrags in eine temporäre Datei (chmod 600), führt einen Shell-Befehl aus " +
+            "und löscht die Datei danach garantiert wieder (auch bei Fehler). Im Befehl wird '{}' durch den Temp-Pfad " +
+            "ersetzt, zusätzlich steht er als $SECRET_FILE bereit. Für SSH-Keys / PEM, die einen Dateipfad verlangen. " +
+            "Das Secret erscheint nicht im Rückgabewert — solange der Befehl es nicht selbst ausgibt.",
+        inputSchema: z.object({
+          item_name: z.string().describe("Name des Vault-Eintrags"),
+          command: z.string().describe(
+            "Shell-Befehl (sh -c); '{}' und $SECRET_FILE = Pfad der temporären Secret-Datei"
+          ),
+        }),
       },
       async ({ item_name, command }) => {
         const { password } = await api<{ password: string }>(`/secret/${encodeURIComponent(item_name)}`);
@@ -264,8 +285,9 @@ function bearerOk(header: string | undefined): boolean {
 
 async function main() {
   if (!HTTP_MODE) {
-    const server = buildServer();
-    await server.connect(new StdioServerTransport());
+    // serveStdio bedient Spec 2026-07-28 (server/discover) und Legacy-initialize; die Factory
+    // kann pro Verbindung mehrfach laufen (verworfene discover-Probe → Legacy-Fallback).
+    serveStdio(buildServer);
     return;
   }
 
@@ -276,6 +298,8 @@ async function main() {
 
   const app = express();
   app.use(express.json({ limit: "4mb" }));
+  // Stateless: pro Request frische Server-Instanz (2026-07-28 + Legacy-Fallback für 2025-11-25).
+  const mcp = toNodeHandler(createMcpHandler(buildServer));
 
   // Healthcheck (kein Token — bewusst, damit der Docker-Healthcheck ohne Secret auskommt).
   app.get("/health", (_req, res) => res.status(200).send("ok"));
@@ -285,13 +309,8 @@ async function main() {
       res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "unauthorized" }, id: null });
       return;
     }
-    // Stateless: pro Request frische Server- + Transport-Instanz.
-    const server = buildServer();
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on("close", () => { transport.close(); server.close(); });
     try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await mcp(req, res, req.body);
     } catch (err) {
       process.stderr.write(`[mykeyvault-mcp] error: ${String(err)}\n`);
       if (!res.headersSent) {
